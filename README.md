@@ -6,7 +6,7 @@ test with webgl
 
 test with 
 
-docs
+docs (and some minimal examples)
 
 ease
 
