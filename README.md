@@ -1,4 +1,4 @@
-~~test with 2d canvas ~~
+~~test with 2d canvas~~
 
 .d.ts
 
