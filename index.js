@@ -1,6 +1,8 @@
-// TODO possible feature:
+// TODO :
 // Simplify API find a way to simplify things further
 // Managed mode, where the lib manages all canvas transformations.
+// Check if the listeners are actually being removed.
+// TODO another level of abstraction above this.
 class PetiteTransform {
   /**
    * @type {() => {x: number, y: number, z: number}} `x` is the x offset, `y` the y offset, and `z` the zoom scale.
@@ -8,18 +10,29 @@ class PetiteTransform {
   #getTransformReference;
   // TODO
   #easeFactor = 1;
+  /**
+   * @type {HTMLElement}
+   */
+  #eventTarget;
   #cumulatedTransform = {
     dx: 0,
     dy: 0,
     dz: 1,
     total: {
-      mat: { x: 0, y: 0, z: 1 },
+      _parent: this,
+      pos: { x: 0, y: 0, z: 1 },
       update: function ({ dx, dy, dz }) {
         // Apply translation first.
         // This is the dot product of the existing matrix and the incoming matrix.
-        this.mat.x = this.mat.x + dx * this.mat.z;
-        this.mat.y = this.mat.y + dy * this.mat.z;
-        this.mat.z *= dz;
+        this.pos.x += dx *= this.pos.z;
+        this.pos.y += dy *= this.pos.z;
+        this.pos.z *= dz;
+
+        // Don't return if is identity transform
+        const iTransform = !dx && !dy && dz === 1;
+        if (!iTransform) {
+          this._parent.#onUpdateListeners.forEach((f) => f(dx, dy, dz));
+        }
       },
     },
     /**
@@ -49,9 +62,9 @@ class PetiteTransform {
      * This is to prevent any translation method in an animation frame from applying the
      * same transform twice. If you need the same transform in multiple places, store it in a variable somewhere.
      *
-     * @type {() => {dx: number, dy: number, dz: number}}
+     * @type {(type: "relative" | "absolute") => {dx: number, dy: number, dz: number}}
      */
-    getTransform: function () {
+    getTransform: function (type) {
       const returnVal = { dx: this.dx, dy: this.dy, dz: this.dz };
 
       this.dx = 0;
@@ -60,7 +73,7 @@ class PetiteTransform {
 
       this.total.update(returnVal);
 
-      return returnVal;
+      return type === "relative" ? returnVal : this.total.pos;
     },
   };
   #isMouseDown = false;
@@ -78,65 +91,88 @@ class PetiteTransform {
    * @type {{type: string, callback: () => any}[]}
    */
   #listenersRefs = [];
+  /**
+   * @type {((dx: number, dy: number, dz: number) => any)[]}
+   */
+  #onUpdateListeners = [];
 
   /**
    *
-   * @param {() => {x: number, y: number, z: number} | null | undefined} transformReference a callback that returns the current transform of the canvas.
-   * @param {number?} devicePixelRatio The device pixel ratio that you set your canvas to. It is
+   * @param {{transformReference?: () => {x: number, y: number, z: number}, devicePixelRatio?: number, easeFactor?: 1, manageZoom?: boolean, managePan?: boolean}}
+   * `transformReference` a callback that returns the current transform of the canvas.
+   * This sets up the two different modes, the relative mode, which uses the reference to the current transform outside
+   * the control of this canvas, and the absolute mode, which does not care about anything else and will treat itself as the source of the transformational truth.
+   * `devicePixelRatio` The device pixel ratio that you set your canvas to. It is
    * vital that this matches what you have set for your canvas.
-   * @param {number} easeFactor the t in (a + (b - a) * t) of the linear interpolation equation.
+   * `easeFactor` the t in (a + (b - a) * t) of the linear interpolation equation.
    * where t is <= 1 and >= 0. If t is less than 1, repeated call to the `currenTransform` method will yield
    * a different value.
+   * `manageZoom` whether or not to have this set up the zoom listener.
+   * `managePan` whether or not to have this set up the pan listener.
+   * `eventTarget` target to attach the event listener to.
    */
-  constructor(transformReference, devicePixelRatio = 1, easeFactor = 1) {
+  constructor({
+    transformReference,
+    devicePixelRatio = 1,
+    easeFactor = 1,
+    managePan = true,
+    manageZoom = true,
+    eventTarget = document,
+  }) {
     this.#easeFactor = easeFactor;
     if (transformReference) {
       this.#getTransformReference = transformReference;
     } else {
       const total = this.#cumulatedTransform.total;
       this.#getTransformReference = () => ({
-        x: total.mat.x,
-        y: total.mat.y,
-        z: total.mat.z,
+        x: total.pos.x,
+        y: total.pos.y,
+        z: total.pos.z,
       });
     }
 
+    this.#eventTarget = eventTarget;
+
     this.#cumulatedTransform.setTransform(0, 0, 1);
 
-    this.#addEventListener("mousedown", (e) => {
-      this.#onmousedown({
-        x: e.x * devicePixelRatio,
-        y: e.y * devicePixelRatio,
-      });
-    });
-
-    this.#addEventListener("mousemove", (e) => {
-      this.#onmousemove({
-        x: e.x * devicePixelRatio,
-        y: e.y * devicePixelRatio,
-      });
-    });
-
-    this.#addEventListener("mouseup", (e) => {
-      this.#onmouseup({
-        x: e.x * devicePixelRatio,
-        y: e.y * devicePixelRatio,
-      });
-    });
-
-    this.#addEventListener(
-      "wheel",
-      (e) => {
-        e.preventDefault();
-
-        this.#onwheel({
+    if (managePan) {
+      this.#addEventListener("mousedown", (e) => {
+        this.#onmousedown({
           x: e.x * devicePixelRatio,
           y: e.y * devicePixelRatio,
-          deltaY: e.deltaY,
         });
-      },
-      { passive: false }
-    );
+      });
+
+      this.#addEventListener("mousemove", (e) => {
+        this.#onpan({
+          x: e.x * devicePixelRatio,
+          y: e.y * devicePixelRatio,
+        });
+      });
+
+      this.#addEventListener("mouseup", (e) => {
+        this.#onmouseup({
+          x: e.x * devicePixelRatio,
+          y: e.y * devicePixelRatio,
+        });
+      });
+    }
+
+    if (manageZoom) {
+      this.#addEventListener(
+        "wheel",
+        (e) => {
+          e.preventDefault();
+
+          this.#onZoom({
+            x: e.x * devicePixelRatio,
+            y: e.y * devicePixelRatio,
+            deltaY: e.deltaY,
+          });
+        },
+        { passive: false }
+      );
+    }
   }
 
   /**
@@ -144,8 +180,9 @@ class PetiteTransform {
    */
   dispose() {
     this.#listenersRefs.forEach((obj) =>
-      document.removeEventListener(obj.type, obj.callback, obj.options)
+      this.#eventTarget.removeEventListener(obj.type, obj.callback, obj.options)
     );
+    this.#onUpdateListeners = [];
   }
 
   /**
@@ -155,10 +192,25 @@ class PetiteTransform {
    * like `ctx.setTransform` instead of something like `ctx.transform` or
    * `ctx.translate`, the transformations will not work correctly.
    *
+   * For something to use with the former, please refer to `currentAbsolteTransform`.
+   *
    * @type {() => {dx: number, dy: number, dz: number}}
    */
-  get currentTransform() {
-    return this.#cumulatedTransform.getTransform();
+  get currentRelativeTransform() {
+    return this.#cumulatedTransform.getTransform("relative");
+  }
+
+  /**
+   * Returns the absolute, cumulated transform throughout the lifecyle of this canvas.
+   *
+   * Useful for when you want to sync multiple canvases to one transform while switching between them as this can be treated as the source of truth.
+   *
+   * But kind of useless if the `transformReference` is set to a non-null value (the source of truth is not this anymore and the value won't be accurate).
+   *
+   * @returns {{x: number, y: number, z: number}}
+   */
+  get currentAbsoluteTransform() {
+    return this.#cumulatedTransform.getTransform("absolute");
   }
 
   #addEventListener(type, callback, options) {
@@ -182,36 +234,50 @@ class PetiteTransform {
   /**
    * @param {{x: number, y: number}} e
    */
-  #onmousemove(e) {
+  #onpan(e) {
     if (this.#isMouseDown) {
       const dx = e.x - this.#panOffset.prev.x;
       const dy = e.y - this.#panOffset.prev.y;
 
-      const globalDx = dx / this.#getTransformReference().z;
-      const globalDy = dy / this.#getTransformReference().z;
+      const worldDx = dx / this.#getTransformReference().z;
+      const worldDy = dy / this.#getTransformReference().z;
       this.#panOffset.prev.x = e.x;
       this.#panOffset.prev.y = e.y;
 
-      this.#cumulatedTransform.setTransformIncrement(globalDx, globalDy);
+      this.#cumulatedTransform.setTransformIncrement(worldDx, worldDy);
     }
   }
 
   /**
    * @param {{x: number, y: number, deltaY: number}} e
    */
-  #onwheel(e) {
+  #onZoom(e) {
     const change = -e.deltaY * 0.0005;
     const { x, y, z } = this.#getTransformReference();
 
     // Grab the world space position of the cursor so that we can calculate
     // later how much to offset the canvas by after zooming.
-    const wx = (e.x - x) / z;
-    const wy = (e.y - y) / z;
+    const wt = {
+      dx: ((x - e.x) * change) / z,
+      dy: ((y - e.y) * change) / z,
+      dz: 1 + change,
+    };
+    this.#cumulatedTransform.setTransform(wt.dx, wt.dy, wt.dz);
+  }
 
-    this.#cumulatedTransform.setTransform(
-      -wx * change,
-      -wy * change,
-      1 + change
+  disposeAdditionalListener(callback) {
+    this.#onUpdateListeners = this.#onUpdateListeners.filter(
+      (thing) => thing != callback
     );
+  }
+
+  /**
+   * Attach additional listners that wants to receive the information about the transformation being applied to the current matrix.
+   *
+   * @param {(dx: number, dy: number, dz: number) => void} callback always return the change for the current transform in world space.
+   * 0 will be returned for dx and dy when no changes are made in the axis, and 1 for dz (eg. in the case of panning).
+   */
+  onUpdate(callback) {
+    this.#onUpdateListeners.push(callback);
   }
 }
