@@ -1,0 +1,18 @@
+Refactor list
+0. Define clear requirements based on your old code, this is like business requirements that the new migrated library will have to conform to.
+0.1 make sure you have a playground where you can import your project
+
+1. Focus on absolute transform first. Define the usage in a testable environment (means you will have to be able to import your shit), then use it!
+2. Then continue working on the reltaive transform.
+3. Then refine the API.
+
+// 
+
+Why I'm building this.
+
+In a sense, this is not a transformation library per se, but a math library. 
+
+This is a problem that has been solved a gazillion times already, but the problem I see right now is that a lot of zoom and pan libraries out there do more than simple transformations. I just want something that I can reuse in any future simple webgl/canvas projects. I just want a simple math library for my canvas with intuitive APIs. Currently, nothing out there really bring to the table everything I want.
+
+
+
